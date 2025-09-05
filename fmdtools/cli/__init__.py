@@ -1,22 +1,19 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-fmdtools CLI package for scaffolding and template generation.
+Compact fmdtools CLI - Interactive model builder.
 """
 
-from .main import app, main
-from .schemas import LevelSpec, FunctionSpec, FlowSpec, ArchitectureSpec
-from .generate import render_level
-from .ai_adapter import AIWizard
+from .nlp_wizard import main as build_model
+from .core import LevelSpec, render_level
 
 __all__ = [
-    'app',
-    'main', 
-    'LevelSpec',
-    'FunctionSpec',
-    'FlowSpec',
-    'ArchitectureSpec',
-    'render_level',
-    'AIWizard'
+    'build_model',  # Main interactive builder
+    'LevelSpec',    # For programmatic use
+    'render_level'  # For generating files
 ]
 
+# Simple entry point
+def create_model():
+    """Create a fmdtools model interactively."""
+    build_model()

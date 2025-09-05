@@ -4,35 +4,28 @@
 Flow definitions for {{ spec.name }} model.
 """
 
-try:
-    from fmdtools.define.flow.base import Flow
-    from fmdtools.define.container.state import State
-except ImportError:
-    try:
-        from fmdtools.define.flow import Flow
-        from fmdtools.define.state import State
-    except ImportError:
-        raise ImportError("Could not import required fmdtools modules")
-
+from fmdtools.define.flow.base import Flow
+from fmdtools.define.container.state import State
 
 {% for flow in flows %}
-{% set safe_name, class_name = flow_mapping[flow.name] %}
-class {{ class_name }}States(State):
-    """States for {{ class_name }} flow."""
+{% set mapping = flow_mapping[flow.name] %}
+class {{ mapping.class_name }}State(State):
+    """State for {{ mapping.class_name }} flow."""
+{% if flow.vars %}
 {% for name, value in flow.vars.items() %}
-    {{ name }} = {{ value | pyrepr }}
+    {{ name | sanitize_identifier }}: float = {{ value }}
 {% endfor %}
+{% else %}
+    effort: float = 1.0
+    rate: float = 1.0
+{% endif %}
 
 
-class {{ class_name }}(Flow):
-    """{{ class_name }} flow."""
+class {{ mapping.class_name }}(Flow):
+    """{{ mapping.class_name }} flow{% if flow.description %} - {{ flow.description | escape_string }}{% endif %}."""
     
     __slots__ = ()
-    container_s = {{ class_name }}States
-    container = {{ class_name }}States  # Compatibility
-{% if flow.description %}
-    # {{ flow.description }}
-{% endif %}
+    container_s = {{ mapping.class_name }}State
 
 
 {% endfor %}

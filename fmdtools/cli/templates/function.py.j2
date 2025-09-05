@@ -3,73 +3,355 @@
 """
 {{ class_name }} function for {{ spec.name }} model.
 
-{% if func.description %}{{ func.description }}{% endif %}
+{% if func.description %}{{ func.description | escape_string }}{% endif %}
 """
 
-try:
-    from fmdtools.define.block.function import Function
-    from fmdtools.define.container.state import State
-    from fmdtools.define.container.mode import Mode
-    from fmdtools.define.container.parameter import Parameter
-except ImportError:
-    try:
-        from fmdtools.define.function import Function
-        from fmdtools.define.state import State
-        from fmdtools.define.mode import Mode
-        from fmdtools.define.parameter import Parameter
-    except ImportError:
-        raise ImportError("Could not import required fmdtools modules")
+from fmdtools.define.block.function import Function
+from fmdtools.define.container.state import State
+from fmdtools.define.container.mode import Mode
+import numpy as np
 
-
-class {{ class_name }}States(State):
-    """States for {{ class_name }} function."""
+{% if func.states %}
+class {{ class_name }}State(State):
+    """State for {{ class_name }} function."""
 {% for name, value in func.states.items() %}
-    {{ name }} = {{ value | pyrepr }}
+    {{ name | sanitize_identifier }}: float = {{ value }}
 {% endfor %}
 
-
-class {{ class_name }}Modes(Mode):
-    """Modes for {{ class_name }} function."""
-{% for mode in func.modes %}
-    {{ mode }}: str = "{{ mode }}"
+{% endif %}
+{% if func.faults %}
+class {{ class_name }}Mode(Mode):
+    """Mode for {{ class_name }} function."""
+    failrate = 1e-5
+{% for fault in func.faults %}
+    fault_{{ fault.name | sanitize_identifier }} = (1e-6,)
 {% endfor %}
+    default_phases = (('na', 1.0),)
+    default_units = 'sec'
 
-
+{% endif %}
 class {{ class_name }}(Function):
     """{{ class_name }} function implementation."""
     
     __slots__ = ()
-    default_sp = {
-        "end_time": 100,
-        "track": "all"
-    }
-    
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-    
+{% if func.states %}
+    container_s = {{ class_name }}State
+{% endif %}
+{% if func.faults %}
+    container_m = {{ class_name }}Mode
+{% endif %}
+
     def static_behavior(self, time):
         """Static behavior implementation."""
-        # TODO: Implement static behavior
-        pass
-    
+        
+        # Handle fault conditions first
+        if self.m.has_fault():
+{% for fault in func.faults %}
+            if self.m.has_fault('{{ fault.name | sanitize_identifier }}'):
+                self._handle_{{ fault.name | sanitize_identifier }}_fault()
+{% endfor %}
+        else:
+            # Nominal behavior when no faults present
+            self._nominal_behavior()
+
+    def _nominal_behavior(self):
+        """Nominal behavior implementation."""
+{% if "engine" in class_name | lower or "motor" in class_name | lower %}
+        # Engine/Motor nominal behavior
+        if hasattr(self.s, 'rpm') and hasattr(self.s, 'temperature'):
+            # Temperature increases with RPM
+            target_temp = 90.0 + (self.s.rpm - 800) * 0.01
+            self.s.temperature += (target_temp - self.s.temperature) * 0.1
+            
+        if hasattr(self.s, 'power_output') and hasattr(self.s, 'rpm') and hasattr(self.s, 'efficiency'):
+            # Power output based on RPM and efficiency
+            base_power = (self.s.rpm / 1800.0) * 200.0
+            self.s.power_output = base_power * self.s.efficiency
+            
+        if hasattr(self.s, 'fuel_level') and hasattr(self.s, 'rpm'):
+            # Fuel consumption
+            fuel_rate = (self.s.rpm / 1800.0) * 0.1
+            self.s.fuel_level = max(0, self.s.fuel_level - fuel_rate * 0.01)
+            
+        if hasattr(self.s, 'oil_pressure') and hasattr(self.s, 'rpm'):
+            # Oil pressure varies with RPM
+            self.s.oil_pressure = 30.0 + (self.s.rpm / 1800.0) * 20.0
+
+{% elif "pump" in class_name | lower or "hydraulic" in class_name | lower %}
+        # Pump/Hydraulic nominal behavior
+        if hasattr(self.s, 'pressure') and hasattr(self.s, 'flow_rate'):
+            # Pressure-flow relationship
+            self.s.pressure = 50.0 + self.s.flow_rate * 5.0
+            
+        if hasattr(self.s, 'temperature') and hasattr(self.s, 'flow_rate'):
+            # Temperature increases with flow rate (friction)
+            self.s.temperature = 25.0 + self.s.flow_rate * 1.5
+            
+        if hasattr(self.s, 'vibration') and hasattr(self.s, 'pressure'):
+            # Vibration increases with pressure
+            self.s.vibration = 0.05 + (self.s.pressure / 100.0) * 0.05
+            
+        if hasattr(self.s, 'efficiency'):
+            # Efficiency degrades slightly with high pressure
+            pressure_factor = getattr(self.s, 'pressure', 100.0) / 100.0
+            self.s.efficiency = max(0.5, 0.9 - (pressure_factor - 1.0) * 0.1)
+
+{% elif "valve" in class_name | lower or "control" in class_name | lower %}
+        # Valve/Control nominal behavior
+        if hasattr(self.s, 'position') and hasattr(self.s, 'flow_coefficient'):
+            # Flow coefficient based on valve position
+            self.s.flow_coefficient = (self.s.position / 100.0) * 1.5
+            
+        if hasattr(self.s, 'pressure_drop') and hasattr(self.s, 'position'):
+            # Pressure drop varies with position
+            opening_factor = self.s.position / 100.0
+            self.s.pressure_drop = 50.0 * (1.0 - opening_factor)
+            
+        if hasattr(self.s, 'efficiency'):
+            # Efficiency based on position (partial opening reduces efficiency)
+            opening_factor = getattr(self.s, 'position', 50.0) / 100.0
+            self.s.efficiency = 0.95 - abs(0.5 - opening_factor) * 0.2
+
+{% elif "ac" in class_name | lower or "air" in class_name | lower or "climate" in class_name | lower %}
+        # AC/Climate system nominal behavior
+        if hasattr(self.s, 'temperature') and hasattr(self.s, 'pressure'):
+            # Temperature control through pressure adjustment
+            if self.s.temperature > 22.0:
+                self.s.pressure = min(self.s.pressure * 1.02, 300.0)
+            elif self.s.temperature < 20.0:
+                self.s.pressure = max(self.s.pressure * 0.98, 150.0)
+                
+        if hasattr(self.s, 'power_consumption') and hasattr(self.s, 'temperature'):
+            # Power consumption based on cooling load
+            load_factor = abs(self.s.temperature - 22.0) / 10.0
+            self.s.power_consumption = 2000.0 + load_factor * 1000.0
+            
+        if hasattr(self.s, 'flow_rate') and hasattr(self.s, 'pressure'):
+            # Flow rate based on pressure
+            self.s.flow_rate = (self.s.pressure / 250.0) * 20.0
+
+{% elif "battery" in class_name | lower or "electrical" in class_name | lower %}
+        # Battery/Electrical nominal behavior
+        if hasattr(self.s, 'voltage') and hasattr(self.s, 'charge_level'):
+            # Voltage varies with charge level
+            self.s.voltage = 11.8 + (self.s.charge_level / 100.0) * 0.8
+            
+        if hasattr(self.s, 'temperature'):
+            # Temperature regulation
+            ambient_temp = 25.0
+            self.s.temperature += (ambient_temp - self.s.temperature) * 0.05
+            
+        if hasattr(self.s, 'current') and hasattr(self.s, 'charge_level'):
+            # Discharge model
+            if self.s.current > 0:
+                discharge_rate = self.s.current / 100.0
+                self.s.charge_level = max(0, self.s.charge_level - discharge_rate * 0.01)
+
+{% elif "sensor" in class_name | lower %}
+        # Sensor nominal behavior
+        if hasattr(self.s, 'reading') and hasattr(self.s, 'accuracy'):
+            # Add small amount of noise to reading
+            noise = (np.random.random() - 0.5) * (1.0 - self.s.accuracy)
+            self.s.reading = max(0, self.s.reading + noise * 0.1)
+            
+        if hasattr(self.s, 'noise_level'):
+            # Update noise level based on conditions
+            self.s.noise_level = 0.01 + np.random.random() * 0.005
+
+{% else %}
+        # Generic component nominal behavior
+        if hasattr(self.s, 'temperature'):
+            # Temperature regulation toward ambient
+            ambient_temp = 25.0
+            self.s.temperature += (ambient_temp - self.s.temperature) * 0.02
+            
+        if hasattr(self.s, 'pressure'):
+            # Maintain pressure within operating range
+            target_pressure = 100.0
+            self.s.pressure += (target_pressure - self.s.pressure) * 0.05
+            
+        if hasattr(self.s, 'flow_rate') and hasattr(self.s, 'pressure'):
+            # Flow rate proportional to pressure
+            self.s.flow_rate = (self.s.pressure / 100.0) * 10.0
+            
+        if hasattr(self.s, 'power_consumption'):
+            # Baseline power consumption
+            self.s.power_consumption = 1000.0
+{% endif %}
+        
+        # Always update efficiency and status for all components
+        if hasattr(self.s, 'efficiency'):
+            # Slight efficiency degradation over time (wear)
+            self.s.efficiency = max(0.5, self.s.efficiency - 0.0001)
+            
+        if hasattr(self.s, 'status'):
+            # Status remains operational if no faults
+            self.s.status = 1.0
+
+{% for fault in func.faults %}
+    def _handle_{{ fault.name | sanitize_identifier }}_fault(self):
+        """Handle {{ fault.name | escape_string }} fault."""
+{% if "overheating" in fault.name | lower or "overheat" in fault.name | lower %}
+        # Overheating fault handling
+        if hasattr(self.s, 'temperature'):
+            self.s.temperature = min(self.s.temperature * 1.2, 150.0)
+        if hasattr(self.s, 'efficiency'):
+            self.s.efficiency *= 0.3
+        if hasattr(self.s, 'power_output'):
+            self.s.power_output *= 0.5
+        if hasattr(self.s, 'status'):
+            self.s.status = 0.3
+{% elif "mechanical" in fault.name | lower or "failure" in fault.name | lower %}
+        # Mechanical failure handling
+        if hasattr(self.s, 'power_output'):
+            self.s.power_output *= 0.1
+        if hasattr(self.s, 'efficiency'):
+            self.s.efficiency = 0.0
+        if hasattr(self.s, 'rpm'):
+            self.s.rpm = max(self.s.rpm * 0.5, 0)
+        if hasattr(self.s, 'flow_rate'):
+            self.s.flow_rate *= 0.2
+        if hasattr(self.s, 'status'):
+            self.s.status = 0.0
+{% elif "leak" in fault.name | lower %}
+        # Leak fault handling
+        if hasattr(self.s, 'pressure'):
+            self.s.pressure *= 0.6
+        if hasattr(self.s, 'flow_rate'):
+            self.s.flow_rate *= 1.5  # Higher flow rate due to leak
+        if hasattr(self.s, 'efficiency'):
+            self.s.efficiency *= 0.7
+        if hasattr(self.s, 'status'):
+            self.s.status = 0.4
+{% elif "electrical" in fault.name | lower or "short" in fault.name | lower %}
+        # Electrical fault handling
+        if hasattr(self.s, 'voltage'):
+            self.s.voltage *= 0.5
+        if hasattr(self.s, 'current'):
+            self.s.current *= 2.0  # Short circuit increases current
+        if hasattr(self.s, 'power_consumption'):
+            self.s.power_consumption *= 0.1
+        if hasattr(self.s, 'status'):
+            self.s.status = 0.1
+{% elif "stuck" in fault.name | lower or "jam" in fault.name | lower %}
+        # Stuck/Jammed fault handling
+        if hasattr(self.s, 'position'):
+            # Position becomes fixed
+            pass  # Position doesn't change
+        if hasattr(self.s, 'flow_coefficient'):
+            self.s.flow_coefficient = 0.0
+        if hasattr(self.s, 'rpm'):
+            self.s.rpm = 0.0
+        if hasattr(self.s, 'status'):
+            self.s.status = 0.0
+{% elif "clog" in fault.name | lower or "block" in fault.name | lower %}
+        # Clogged/Blocked fault handling
+        if hasattr(self.s, 'flow_rate'):
+            self.s.flow_rate *= 0.1
+        if hasattr(self.s, 'pressure'):
+            self.s.pressure *= 1.5  # Back pressure increases
+        if hasattr(self.s, 'efficiency'):
+            self.s.efficiency *= 0.2
+        if hasattr(self.s, 'status'):
+            self.s.status = 0.2
+{% elif "sensor" in fault.name | lower or "reading" in fault.name | lower %}
+        # Sensor fault handling
+        if hasattr(self.s, 'reading'):
+            # Erratic readings
+            self.s.reading *= (0.5 + np.random.random())
+        if hasattr(self.s, 'accuracy'):
+            self.s.accuracy *= 0.1
+        if hasattr(self.s, 'noise_level'):
+            self.s.noise_level *= 10.0
+        if hasattr(self.s, 'status'):
+            self.s.status = 0.1
+{% else %}
+        # Generic fault handling
+        if hasattr(self.s, 'efficiency'):
+            self.s.efficiency *= 0.5
+        if hasattr(self.s, 'power_output'):
+            self.s.power_output *= 0.3
+        if hasattr(self.s, 'flow_rate'):
+            self.s.flow_rate *= 0.7
+        if hasattr(self.s, 'temperature') and "heat" not in "{{ fault.name | lower }}":
+            self.s.temperature *= 1.1
+        if hasattr(self.s, 'status'):
+            self.s.status = 0.5
+{% endif %}
+
+{% endfor %}
     def dynamic_behavior(self, time):
         """Dynamic behavior implementation."""
-        # TODO: Implement dynamic behavior
-        pass
-    
-    {% if func.faults %}
-    def failure_modes(self):
-        """Return list of failure modes."""
-        return [
-    {% for fault in func.faults %}
-            "{{ fault.name }}"{% if not loop.last %},{% endif %}
-    {% endfor %}
-        ]
-    {% endif %}
-    
-    {% if func.faults %}
-    def condfaults(self, time):
-        """Conditional fault injection."""
-        # TODO: Implement conditional fault logic
-        pass
-    {% endif %}
+        dt = 1.0  # Time step
+        
+{% if "engine" in class_name | lower or "motor" in class_name | lower %}
+        # Engine/Motor dynamics
+        if hasattr(self.s, 'rpm') and not self.m.has_fault():
+            # RPM dynamics
+            rpm_rate = (1800.0 - self.s.rpm) * 0.1
+            self.s.rpm = max(0, self.s.rpm + rpm_rate * dt)
+            
+        if hasattr(self.s, 'temperature'):
+            # Temperature dynamics with cooling
+            cooling_rate = (self.s.temperature - 25.0) * 0.02
+            self.s.temperature = max(25.0, self.s.temperature - cooling_rate * dt)
+
+{% elif "pump" in class_name | lower or "hydraulic" in class_name | lower %}
+        # Pump dynamics
+        if hasattr(self.s, 'pressure'):
+            # Pressure buildup dynamics
+            target_pressure = getattr(self.s, 'flow_rate', 10.0) * 10.0
+            pressure_rate = (target_pressure - self.s.pressure) * 0.2
+            self.s.pressure += pressure_rate * dt
+            
+        if hasattr(self.s, 'vibration'):
+            # Vibration dynamics
+            self.s.vibration += (np.random.random() - 0.5) * 0.01
+
+{% elif "valve" in class_name | lower or "control" in class_name | lower %}
+        # Valve dynamics
+        if hasattr(self.s, 'position'):
+            # Position control dynamics (if not stuck)
+            if not self.m.has_fault('stuck') and not self.m.has_fault('jam'):
+                # Smooth position changes
+                target_position = 50.0  # Default middle position
+                position_rate = (target_position - self.s.position) * 0.1
+                self.s.position += position_rate * dt
+
+{% elif "ac" in class_name | lower or "air" in class_name | lower %}
+        # AC system dynamics
+        if hasattr(self.s, 'temperature'):
+            # Temperature control dynamics
+            cooling_rate = 0.05 if getattr(self.s, 'pressure', 250) > 200 else 0.01
+            ambient_temp = 30.0
+            temp_change = (ambient_temp - self.s.temperature) * cooling_rate
+            self.s.temperature += temp_change * dt
+
+{% elif "battery" in class_name | lower %}
+        # Battery dynamics
+        if hasattr(self.s, 'voltage') and hasattr(self.s, 'current'):
+            # Voltage dynamics with internal resistance
+            if self.s.current > 0:
+                voltage_drop = self.s.current * 0.01
+                self.s.voltage = max(10.0, self.s.voltage - voltage_drop * dt)
+
+{% elif "sensor" in class_name | lower %}
+        # Sensor dynamics
+        if hasattr(self.s, 'reading'):
+            # Add dynamic noise
+            noise_amplitude = getattr(self.s, 'noise_level', 0.01)
+            noise = (np.random.random() - 0.5) * noise_amplitude
+            self.s.reading += noise
+
+{% else %}
+        # Generic component dynamics
+        if hasattr(self.s, 'temperature'):
+            # Temperature dynamics toward ambient
+            cooling_rate = (self.s.temperature - 25.0) * 0.01
+            self.s.temperature += -cooling_rate * dt
+            
+        if hasattr(self.s, 'pressure'):
+            # Pressure fluctuations
+            pressure_noise = (np.random.random() - 0.5) * 1.0
+            self.s.pressure += pressure_noise * dt
+{% endif %}

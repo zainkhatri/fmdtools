@@ -4,57 +4,46 @@
 Architecture definition for {{ spec.name }} model.
 """
 
-try:
-    from fmdtools.define.architecture.function import FunctionArchitecture, FunctionArchitectureGraph
-except ImportError:
-    try:
-        from fmdtools.define.architecture import FunctionArchitecture, FunctionArchitectureGraph
-    except ImportError:
-        raise ImportError("Could not import FunctionArchitecture from fmdtools")
+from fmdtools.define.architecture.function import FunctionArchitecture
 
+# Import functions
 {% for func in functions %}
-{% set safe_name, class_name = function_mapping[func.name] %}
-from {{ safe_name }} import {{ class_name }}
+{% set mapping = function_mapping[func.name] %}
+from .{{ mapping.safe_name }} import {{ mapping.class_name }}
 {% endfor %}
 
-{% for flow in spec.flows %}
-{% set safe_name, class_name = flow_mapping[flow.name] %}
-from flows import {{ class_name }}
-{% endfor %}
+# Import flows
+{% if spec.flows %}
+from .flows import {% for flow in spec.flows %}{{ flow_mapping[flow.name].class_name }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
 
 
 class {{ arch_class_name }}(FunctionArchitecture):
-    """{{ arch.name }} architecture."""
+    """{{ arch.name }} architecture implementation."""
     
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        
-        # Add functions
-{% for func_name in arch.functions %}
-{% set safe_name, class_name = function_mapping[func_name] %}
-        self.{{ safe_name }} = {{ class_name }}()
-{% endfor %}
-        
+    __slots__ = ()
+    default_sp = dict(end_time=100, units='sec')
+    default_track = {'fxns': 'all', 'flows': 'all'}
+    
+    def init_architecture(self, **kwargs):
+        """Initialize the architecture with flows and functions."""
         # Add flows
 {% for flow in spec.flows %}
-{% set safe_name, class_name = flow_mapping[flow.name] %}
-        self.{{ safe_name }} = {{ class_name }}()
+{% set mapping = flow_mapping[flow.name] %}
+        self.add_flow("{{ mapping.safe_name }}", {{ mapping.class_name }})
 {% endfor %}
-        
-        # Add connections
+
+        # Add functions
+{% for func_name in arch.functions %}
+{% set mapping = function_mapping[func_name] %}
+        self.add_fxn("{{ mapping.safe_name }}", {{ mapping.class_name }})
+{% endfor %}
+
+        # Define connections
 {% for conn in arch.connections %}
-{% set flow_safe_name, flow_class_name = flow_mapping[conn.flow_name] %}
-        self.add_connection(
-            self.{{ function_mapping[conn.from_fn][0] }},
-            self.{{ function_mapping[conn.to_fn][0] }},
-            self.{{ flow_safe_name }}
-        )
+{% set from_mapping = function_mapping[conn.from_fn] %}
+{% set to_mapping = function_mapping[conn.to_fn] %}
+{% set flow_mapping_item = flow_mapping[conn.flow_name] %}
+        # Connect {{ conn.from_fn }} to {{ conn.to_fn }} via {{ conn.flow_name }}
+        # TODO: Define specific connection pattern
 {% endfor %}
-
-
-class {{ arch_class_name }}Graph(FunctionArchitectureGraph):
-    """Graph representation of {{ arch.name }}."""
-    
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.arch = {{ arch_class_name }}(**kwargs)
