@@ -1,0 +1,30 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Flow definitions for {{ spec.name }} model.
+"""
+
+from fmdtools.define.flow.base import Flow
+from fmdtools.define.container.state import State
+
+{% for flow in flows %}
+{% set mapping = flow_mapping[flow.name] %}
+class {{ mapping.class_name }}State(State):
+    """State for {{ mapping.class_name }} flow."""
+{% if flow.vars %}
+{% for name, value in flow.vars.items() %}
+    {{ name | sanitize_identifier }}: float = {{ value }}
+{% endfor %}
+{% else %}
+    effort: float = 1.0
+    rate: float = 1.0
+{% endif %}
+
+
+class {{ mapping.class_name }}(Flow):
+    """{{ mapping.class_name }} flow{% if flow.description %} - {{ flow.description | escape_string }}{% endif %}."""
+    
+    container_s = {{ mapping.class_name }}State
+
+
+{% endfor %}

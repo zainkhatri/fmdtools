@@ -1,0 +1,50 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+Architecture definition for {{ spec.name }} model.
+"""
+
+from fmdtools.define.architecture.function import FunctionArchitecture
+
+# Import functions
+{% for func in functions %}
+{% set mapping = function_mapping[func.name] %}
+from .{{ mapping.safe_name }} import {{ mapping.class_name }}
+{% endfor %}
+
+# Import flows
+{% if spec.flows %}
+from .flows import {% for flow in spec.flows %}{{ flow_mapping[flow.name].class_name }}{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
+
+
+class {{ arch_class_name }}(FunctionArchitecture):
+    """{{ arch.name }} architecture implementation."""
+    
+    default_sp = dict(end_time=100.0, time_step=1.0, units='sec')
+    default_track = {'fxns': 'all', 'flows': 'all'}
+    
+    def init_architecture(self, **kwargs):
+        """Initialize the architecture with flows and functions."""
+        # Add flows
+{% for flow in spec.flows %}
+{% set mapping = flow_mapping[flow.name] %}
+        self.add_flow("{{ mapping.safe_name }}", {{ mapping.class_name }})
+{% endfor %}
+
+        # Add functions
+{% for func_name in arch.functions %}
+{% set mapping = function_mapping[func_name] %}
+        # Connect function to all flows (simplified approach)
+{% if spec.flows %}
+        self.add_fxn("{{ mapping.safe_name }}", {{ mapping.class_name }}{% for flow in spec.flows %}{% set flow_mapping_item = flow_mapping[flow.name] %}, "{{ flow_mapping_item.safe_name }}"{% endfor %})
+{% else %}
+        self.add_fxn("{{ mapping.safe_name }}", {{ mapping.class_name }})
+{% endif %}
+{% endfor %}
+
+    def __call__(self, time=None, **kwargs):
+        """Simulate the architecture until given time."""
+        if time is not None:
+            kwargs['end_time'] = time
+        return super().__call__(**kwargs)
